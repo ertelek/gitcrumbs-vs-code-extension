@@ -4,7 +4,7 @@
   "displayName": "Gitcrumbs",
   "description": "A lightweight tool for keeping track of file changes before you create a commit.",
   "publisher": "ertelek",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "license": "MIT",
   "repository": {
     "url": "https://github.com/ertelek/gitcrumbs-vs-code-extension"

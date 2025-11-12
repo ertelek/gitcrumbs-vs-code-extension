@@ -53,7 +53,7 @@ Before using this extension, you’ll need to have:
 Search for **“Gitcrumbs”** in the VS Code Extensions Marketplace or run:
 
 ```bash
-ext install gitcrumbs.gitcrumbs
+ext install ertelek.gitcrumbs
 ```
 
 Then reload VS Code.
