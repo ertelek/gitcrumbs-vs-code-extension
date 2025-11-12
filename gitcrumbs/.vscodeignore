@@ -1,0 +1,7 @@
+node_modules/*
+!node_modules/vscode
+.vscode/**
+src/**
+**/*.map
+.gitignore
+deployment-details.txt
