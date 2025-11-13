@@ -17,10 +17,7 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
   private loading = false;
   private loadKey: string | null = null;
 
-  constructor(
-    private readonly store: Store,
-    private readonly cli: Cli
-  ) {}
+  constructor(private readonly store: Store, private readonly cli: Cli) {}
 
   refresh() {
     this._onDidChangeTreeData.fire();
@@ -162,22 +159,11 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
 
   async getChildren(element?: vscode.TreeItem): Promise<vscode.TreeItem[]> {
     if (!this.a || !this.b) {
-      const header = new vscode.TreeItem(
-        this.label(),
-        vscode.TreeItemCollapsibleState.None
-      );
-      header.contextValue = "gitcrumbs.diff.header";
-      return [header];
+      return this.getHeader();
     }
 
     if (!element) {
-      const nodes: vscode.TreeItem[] = [];
-      const header = new vscode.TreeItem(
-        this.label(),
-        vscode.TreeItemCollapsibleState.None
-      );
-      header.contextValue = "gitcrumbs.diff.header";
-      nodes.push(header);
+      const nodes: vscode.TreeItem[] = this.getHeader();
 
       if (this.loading) {
         const loading = new vscode.TreeItem(
@@ -213,6 +199,23 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
 
   private count(k: Kind) {
     return this.changes.filter((c) => c.kind === k).length;
+  }
+
+  private getHeader() {
+    const headerText = "Right-click two snapshots above for diffing.";
+    const header = new vscode.TreeItem(
+      headerText,
+      vscode.TreeItemCollapsibleState.None
+    );
+    header.contextValue = "gitcrumbs.diff.header";
+
+    const label = new vscode.TreeItem(
+      this.label(),
+      vscode.TreeItemCollapsibleState.None
+    );
+    label.contextValue = "gitcrumbs.diff.label";
+
+    return [header, label];
   }
 
   private label() {

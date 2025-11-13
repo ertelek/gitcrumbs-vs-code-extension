@@ -4,6 +4,7 @@ import { Cli } from "./infra/cli";
 import { ActionsView } from "./ui/actionsView";
 import { TimelineTreeView } from "./ui/timelineTree";
 import { DiffTreeView } from "./ui/diffTree";
+import { TrackingView } from "./ui/trackingView";
 import { openFileSideBySide } from "./util/sideBySide";
 import { Store } from "./state/store";
 import { selectRepo } from "./util/selectRepo";
@@ -17,16 +18,18 @@ export function activate(context: vscode.ExtensionContext) {
   const store = new Store();
   const cli = new Cli(cliPath);
   const trackRunner = new TrackRunner(cli, store);
-  const actionsView = new ActionsView();
 
   // Tree views
+  const actionsView = new ActionsView();
   const timelineView = new TimelineTreeView(store, cli);
   const diffView = new DiffTreeView(store, cli);
+  const trackingView = new TrackingView();
 
   disposables.push(
     vscode.window.registerTreeDataProvider("gitcrumbs.actions", actionsView),
     vscode.window.registerTreeDataProvider("gitcrumbs.timeline", timelineView),
-    vscode.window.registerTreeDataProvider("gitcrumbs.diff", diffView)
+    vscode.window.registerTreeDataProvider("gitcrumbs.diff", diffView),
+    vscode.window.registerTreeDataProvider("gitcrumbs.tracking", trackingView)
   );
 
   // Commands
