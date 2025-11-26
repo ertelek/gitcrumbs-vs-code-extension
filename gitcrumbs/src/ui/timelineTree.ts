@@ -4,17 +4,20 @@ import type { Cli } from "../infra/cli";
 
 type SnapshotRow = {
   id: number;
-  created_at: string; // "YYYY-MM-DD HH:MM:SS" if time present
+  created_at: string; // "YYYY-MM-DD HH:MM:SS"
   branch: string | null;
   summary: string | null;
   restored_from_snapshot_id: number | null;
 };
 
-export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
+export class TimelineTreeView
+  implements vscode.TreeDataProvider<TimelineItem | vscode.TreeItem>
+{
   private _onDidChangeTreeData = new vscode.EventEmitter<void>();
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private snapshots: SnapshotRow[] = [];
+  private currentId: number | null = null; // NEW
 
   constructor(private readonly store: Store, private readonly cli: Cli) {}
 
@@ -23,22 +26,32 @@ export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
       const repo = this.store.repoPath();
       if (!repo) {
         this.snapshots = [];
+        this.currentId = null;
         this._onDidChangeTreeData.fire();
         return;
       }
-      const res = await this.cli.run(["timeline"], repo); // Cli.run sets COLUMNS=10000 to avoid wrapping
-      if (res.code !== 0) {
+
+      // 1) Get timeline rows
+      const timelineRes = await this.cli.run(["timeline"], repo);
+      if (timelineRes.code !== 0) {
         this.snapshots = [];
+        this.currentId = null;
         this._onDidChangeTreeData.fire();
         return;
       }
-      this.snapshots = this.parseTimelineFromCli(res.stdout);
+      this.snapshots = this.parseTimelineFromCli(timelineRes.stdout);
+
+      // 2) Get current cursor snapshot id from `status`
+      const statusRes = await this.cli.run(["status"], repo);
+      this.currentId = this.parseCurrentIdFromStatus(statusRes.stdout);
+
       // NEWEST FIRST
       this.snapshots.sort((a, b) => b.id - a.id);
       this._onDidChangeTreeData.fire();
     } catch (e: any) {
       console.error("[gitcrumbs] timeline refresh failed:", e?.message || e);
       this.snapshots = [];
+      this.currentId = null;
       this._onDidChangeTreeData.fire();
     }
   }
@@ -47,14 +60,56 @@ export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
     return el;
   }
 
-  getChildren(): Promise<TimelineItem[]> {
+  private getHeader() {
+    const headerText = "Right-click a snapshot for options.";
+    const header = new vscode.TreeItem(
+      headerText,
+      vscode.TreeItemCollapsibleState.None
+    );
+    header.contextValue = "gitcrumbs.timeline.header";
+
+    return [header];
+  }
+
+  getChildren(): Promise<(TimelineItem | vscode.TreeItem)[]> {
     if (!this.snapshots.length) return Promise.resolve([]);
-    const items = this.snapshots.map((s) => {
-      const label = `#${s.id}   ${s.created_at}  ${s.branch ?? "?"} — ${
-        s.summary ?? ""
-      }`.trim();
-      return new TimelineItem(label, s.id);
-    });
+    const items = this.getHeader().concat(
+      this.snapshots.map((s) => {
+        // Keep label focused; move date/branch to description
+        const label = `#${s.id} —`.trim();
+
+        const isCurrent = this.currentId !== null && s.id === this.currentId;
+        const item = new TimelineItem(label, s.id);
+
+        // Icon: ✓ for current snapshot
+        if (isCurrent) {
+          item.iconPath = new vscode.ThemeIcon("check");
+        }
+        item.description = `${s.created_at} · ${s.branch ?? "?"}`;
+
+        // Rich tooltip with full details
+        const md = new vscode.MarkdownString(undefined, true);
+        md.isTrusted = true;
+        md.appendMarkdown(
+          [
+            `**Snapshot #${s.id}**${isCurrent ? " — _(current)_" : ""}`,
+            "",
+            `**Created:** ${s.created_at}`,
+            `**Branch:** ${s.branch ?? "?"}`,
+            s.restored_from_snapshot_id
+              ? `**Resumed-From:** #${s.restored_from_snapshot_id}`
+              : "",
+            s.summary ? `**Summary:** ${s.summary}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n\n")
+        );
+        item.tooltip = md;
+
+        // Context value unchanged (menus still work)
+        return item;
+      })
+    );
     return Promise.resolve(items);
   }
 
@@ -103,7 +158,13 @@ export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
     await this.refresh();
   }
 
-  // ---------- Robust parser for multi-line Rich table ----------
+  // ---------- Parse helpers ----------
+  private parseCurrentIdFromStatus(text: string): number | null {
+    // Expect lines like: "Cursor snapshot id: 12"
+    const m = text.match(/Cursor snapshot id:\s*(\d+)/i);
+    return m ? Number(m[1]) : null;
+  }
+
   private parseTimelineFromCli(text: string): SnapshotRow[] {
     const rows: SnapshotRow[] = [];
 
@@ -123,6 +184,7 @@ export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
       id: number;
       createdDate?: string;
       createdTime?: string;
+      createdDateTime?: string; // NEW: full "YYYY-MM-DD HH:MM:SS"
       branchParts: string[];
       summaryParts: string[];
       resumed?: number | null;
@@ -131,14 +193,18 @@ export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
 
     const looksDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
     const looksTime = (s: string) => /^\d{2}:\d{2}:\d{2}$/.test(s);
+    const looksDateTime = (s: string) =>
+      /^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}$/.test(s); // NEW
 
     const flush = () => {
       if (!cur) return;
-      const created_at = cur.createdDate
-        ? cur.createdTime
-          ? `${cur.createdDate} ${cur.createdTime}`
-          : cur.createdDate
-        : "";
+      const created_at =
+        cur.createdDateTime ??
+        (cur.createdDate
+          ? cur.createdTime
+            ? `${cur.createdDate} ${cur.createdTime}`
+            : cur.createdDate
+          : "");
       const branch = cur.branchParts.join(" ").trim() || null;
       const summary =
         cur.summaryParts.join(" ").replace(/\s+/g, " ").trim() || null;
@@ -166,27 +232,25 @@ export class TimelineTreeView implements vscode.TreeDataProvider<TimelineItem> {
           summaryParts: [],
           resumed: null,
         };
-        // Created column usually carries DATE on first visual line
-        if (looksDate(c2)) cur.createdDate = c2;
-        else if (looksTime(c2)) cur.createdTime = c2; // (edge case)
-        // Branch may already have content on first line
+
+        // Created column may be full datetime on the first visual line
+        if (looksDateTime(c2)) cur.createdDateTime = c2;
+        else if (looksDate(c2)) cur.createdDate = c2;
+        else if (looksTime(c2)) cur.createdTime = c2;
+
         if (c3) cur.branchParts.push(c3);
-        // Summary first fragment
         if (c4) cur.summaryParts.push(c4);
-        // Resumed-From if present
         if (/^\d+$/.test(c5)) cur.resumed = Number(c5);
         continue;
       }
 
       // Continuation line for the current row
       if (!cur) continue;
-      // Created column carries TIME on second line in your sample
+
+      // Sometimes time could appear on a wrapped line (older format)
       if (looksTime(c2)) cur.createdTime = c2;
-      // Branch continuation (usually blank, but handle just in case)
       if (c3) cur.branchParts.push(c3);
-      // Summary continuation
       if (c4) cur.summaryParts.push(c4);
-      // Resumed-From can appear later (rare)
       if (/^\d+$/.test(c5)) cur.resumed = Number(c5);
     }
 

@@ -16,6 +16,44 @@ export class Cli {
     this.bin = bin;
   }
 
+  static commandExists(cmd: string, cwd: string): boolean {
+    try {
+      const sh = os.platform() === "win32" ? "cmd" : "bash";
+      const args =
+        os.platform() === "win32"
+          ? ["/c", `where ${cmd}`]
+          : ["-lc", `command -v ${cmd} || which ${cmd}`];
+      const out = execFileSync(sh, args, { cwd, encoding: "utf8" })
+        .trim()
+        .split(/\r?\n/)[0];
+      return Boolean(out);
+    } catch {
+      return false;
+    }
+  }
+
+  static async runRaw(
+    bin: string,
+    args: string[],
+    cwd: string
+  ): Promise<CliResult> {
+    return new Promise<CliResult>((resolve) => {
+      const child = spawn(bin, args, {
+        cwd,
+        shell: false,
+        env: { ...process.env, COLUMNS: "10000", NO_COLOR: "1" },
+      });
+      let stdout = "",
+        stderr = "";
+      child.stdout.on("data", (b) => (stdout += b.toString()));
+      child.stderr.on("data", (b) => (stderr += b.toString()));
+      child.on("close", (code) => resolve({ code: code ?? 0, stdout, stderr }));
+      child.on("error", () =>
+        resolve({ code: 127, stdout: "", stderr: `Failed to run ${bin}` })
+      );
+    });
+  }
+
   private resolveBin(cwd: string): string {
     if (this.resolvedBin) return this.resolvedBin;
     try {
@@ -42,7 +80,7 @@ export class Cli {
       const child = spawn(bin, args, {
         cwd,
         shell: false,
-        env: { ...process.env, COLUMNS: "10000", NO_COLOR: "1" }, // unwrap Rich tables, strip colors
+        env: { ...process.env, COLUMNS: "10000", NO_COLOR: "1" },
       });
       let stdout = "",
         stderr = "";
