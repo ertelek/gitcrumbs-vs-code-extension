@@ -128,6 +128,17 @@ You can start and stop tracking from the **Tracking** view or the command palett
 
 ---
 
+## 🧭 Startup & Repository Selection Behavior
+
+- On startup, the extension checks that **Git** and **gitcrumbs** are installed. If either is missing, you’ll see an error.
+- If your configured `gitcrumbs.repoPath` isn’t a **Git** repository, you’ll see a message that you’re not in a Git repo.
+- When you **select or change** the repository:
+  - If the folder isn’t a Git repo, you’ll be asked whether to initialise one there. Choosing **Yes** runs `git init` and `gitcrumbs init`.
+  - If the folder is a Git repo but **gitcrumbs** hasn’t been initialised yet, the extension will initialise it automatically.
+  - After initialisation, you’ll be asked if you want to **start tracking** right away.
+
+---
+
 ## 🧩 Configuration
 
 You can customize settings under **Settings → Extensions → Gitcrumbs**:

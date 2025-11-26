@@ -202,20 +202,25 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
   }
 
   private getHeader() {
-    const headerText = "Right-click two snapshots above for diffing.";
-    const header = new vscode.TreeItem(
-      headerText,
-      vscode.TreeItemCollapsibleState.None
-    );
-    header.contextValue = "gitcrumbs.diff.header";
+    let headerItem = [];
 
-    const label = new vscode.TreeItem(
-      this.label(),
-      vscode.TreeItemCollapsibleState.None
-    );
-    label.contextValue = "gitcrumbs.diff.label";
-
-    return [header, label];
+    if (this.a || this.b) {
+      const label = new vscode.TreeItem(
+        this.label(),
+        vscode.TreeItemCollapsibleState.None
+      );
+      label.contextValue = "gitcrumbs.diff.label";
+      headerItem.push(label);
+    } else {
+      const headerText = "Select two snapshots above for diffing.";
+      const header = new vscode.TreeItem(
+        headerText,
+        vscode.TreeItemCollapsibleState.None
+      );
+      header.contextValue = "gitcrumbs.diff.header";
+      headerItem.push(header);
+    }
+    return headerItem;
   }
 
   private label() {

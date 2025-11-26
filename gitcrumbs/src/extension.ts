@@ -11,6 +11,61 @@ import { selectRepo } from "./util/selectRepo";
 
 let disposables: vscode.Disposable[] = [];
 
+async function isGitRepo(path: string): Promise<boolean> {
+  if (!path) return false;
+  const res = await Cli.runRaw(
+    "git",
+    ["rev-parse", "--is-inside-work-tree"],
+    path
+  );
+  return res.code === 0 && /true/i.test(res.stdout.trim());
+}
+
+async function isGitcrumbsInitialised(
+  cli: Cli,
+  path: string
+): Promise<boolean> {
+  const res = await cli.run(["status"], path);
+  return res.code === 0;
+}
+
+async function maybeAutoInitGitcrumbsOnLoad(
+  cli: Cli,
+  trackRunner: TrackRunner,
+  repoPath: string
+) {
+  // only if already a Git repo; do nothing else if not a git repo
+  if (!(await isGitRepo(repoPath))) {
+    vscode.window.showInformationMessage(
+      "Gitcrumbs: You’re not in a Git repository."
+    );
+    return;
+  }
+
+  // If git repo but gc not initialised -> init automatically, then ask to start tracking
+  const initialised = await isGitcrumbsInitialised(cli, repoPath);
+
+  if (!initialised) {
+    const initRes = await cli.run(["init"], repoPath);
+    if (initRes.code !== 0) {
+      await cli.showError(
+        initRes,
+        "Failed to initialise gitcrumbs in this repository."
+      );
+      return;
+    }
+  }
+
+  const choice = await vscode.window.showInformationMessage(
+    "Gitcrumbs initialised for this repository. Start tracking now?",
+    "Yes",
+    "No"
+  );
+  if (choice === "Yes") {
+    trackRunner.start();
+  }
+}
+
 export function activate(context: vscode.ExtensionContext) {
   const cfg = vscode.workspace.getConfiguration("gitcrumbs");
   const cliPath = cfg.get<string>("path", "gitcrumbs");
@@ -18,6 +73,10 @@ export function activate(context: vscode.ExtensionContext) {
   const store = new Store();
   const cli = new Cli(cliPath);
   const trackRunner = new TrackRunner(cli, store);
+
+  trackRunner.onSnapshotCreated(() => {
+    timelineView.refresh();
+  });
 
   // Tree views
   const actionsView = new ActionsView();
@@ -64,9 +123,10 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand("gitcrumbs.openDiff", (item: unknown) =>
       diffView.openDiff(item as any)
     ),
+    // UPDATED: pass cli into selectRepo
     vscode.commands.registerCommand(
       "gitcrumbs.selectRepo",
-      async () => await selectRepo(timelineView, trackRunner)
+      async () => await selectRepo(timelineView, trackRunner, cli)
     ),
     vscode.commands.registerCommand("gitcrumbs.refreshTimeline", () =>
       timelineView.refresh()
@@ -94,7 +154,6 @@ export function activate(context: vscode.ExtensionContext) {
   status.show();
   disposables.push(status);
 
-  // Expose simple context key for menus
   const setCtx = (k: string, v: any) =>
     vscode.commands.executeCommand("setContext", k, v);
   trackRunner.onStateChanged((running: boolean) => {
@@ -108,6 +167,33 @@ export function activate(context: vscode.ExtensionContext) {
   // Initial refresh
   timelineView.refresh();
   diffView.refresh();
+
+  // -------- startup checks --------
+  const cwdForChecks =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+
+  if (!Cli.commandExists("git", cwdForChecks)) {
+    vscode.window.showErrorMessage(
+      "Gitcrumbs: Git is not installed or not found on PATH. Please install Git and reload."
+    );
+    context.subscriptions.push(...disposables);
+    return;
+  }
+
+  if (!Cli.commandExists(cli.bin, cwdForChecks)) {
+    vscode.window.showErrorMessage(
+      "Gitcrumbs: The gitcrumbs CLI is not installed or not found on PATH. Please install gitcrumbs and reload."
+    );
+    context.subscriptions.push(...disposables);
+    return;
+  }
+
+  const repoPath = store.repoPath?.() ?? ""; // Store has repoPath()
+  if (repoPath) {
+    // On load: if not a Git repo -> show message and do nothing else (per requirement)
+    // If is a Git repo but gitcrumbs not initialised -> auto-init then prompt to start tracking.
+    maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, repoPath);
+  }
 
   context.subscriptions.push(...disposables);
 }
