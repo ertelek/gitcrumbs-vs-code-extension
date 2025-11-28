@@ -7,42 +7,41 @@ import { DiffTreeView } from "./ui/diffTree";
 import { TrackingView } from "./ui/trackingView";
 import { openFileSideBySide } from "./util/sideBySide";
 import { Store } from "./state/store";
-import { selectRepo } from "./util/selectRepo";
+import {
+  selectRepo,
+  isGitRepo,
+  isGitcrumbsInitialised,
+  askToStartTrackingForRepo,
+  repoDisplayName,
+} from "./util/selectRepo";
 
 let disposables: vscode.Disposable[] = [];
 
-async function isGitRepo(path: string): Promise<boolean> {
-  if (!path) return false;
-  const res = await Cli.runRaw(
-    "git",
-    ["rev-parse", "--is-inside-work-tree"],
-    path
-  );
-  return res.code === 0 && /true/i.test(res.stdout.trim());
-}
+// Keep a module-level reference so we can stop the tracker on deactivate, etc.
+let trackRunnerRef: TrackRunner | null = null;
 
-async function isGitcrumbsInitialised(
-  cli: Cli,
-  path: string
-): Promise<boolean> {
-  const res = await cli.run(["status"], path);
-  return res.code === 0;
-}
-
+/**
+ * On startup, if there is a repo path configured/workspace-root:
+ * - If it's not a Git repo → just inform the user (with repo name) and exit.
+ * - If it is a Git repo but gitcrumbs is not initialised → init gitcrumbs.
+ * - In either case, ask whether to start tracking (shared helper).
+ */
 async function maybeAutoInitGitcrumbsOnLoad(
   cli: Cli,
   trackRunner: TrackRunner,
   repoPath: string
 ) {
+  const repoName = repoDisplayName(repoPath);
+
   // only if already a Git repo; do nothing else if not a git repo
   if (!(await isGitRepo(repoPath))) {
     vscode.window.showInformationMessage(
-      "Gitcrumbs: You’re not in a Git repository."
+      `Gitcrumbs: ${repoName} is not a Git repository.`
     );
     return;
   }
 
-  // If git repo but gc not initialised -> init automatically, then ask to start tracking
+  // If git repo but gitcrumbs not initialised -> init automatically
   const initialised = await isGitcrumbsInitialised(cli, repoPath);
 
   if (!initialised) {
@@ -50,20 +49,14 @@ async function maybeAutoInitGitcrumbsOnLoad(
     if (initRes.code !== 0) {
       await cli.showError(
         initRes,
-        "Failed to initialise gitcrumbs in this repository."
+        `Failed to initialise gitcrumbs in repository ${repoName}.`
       );
       return;
     }
   }
 
-  const choice = await vscode.window.showInformationMessage(
-    "Gitcrumbs initialised for this repository. Start tracking now?",
-    "Yes",
-    "No"
-  );
-  if (choice === "Yes") {
-    trackRunner.start();
-  }
+  // Then ask whether to start tracking for this repo (shared logic)
+  await askToStartTrackingForRepo(trackRunner, repoPath);
 }
 
 export async function activate(
@@ -75,16 +68,18 @@ export async function activate(
   const store = new Store();
   const cli = new Cli(cliPath);
   const trackRunner = new TrackRunner(cli, store);
-
-  trackRunner.onSnapshotCreated(() => {
-    timelineView.refresh();
-  });
+  trackRunnerRef = trackRunner;
 
   // Tree views
-  const actionsView = new ActionsView();
+  const actionsView = new ActionsView(store);
   const timelineView = new TimelineTreeView(store, cli);
   const diffView = new DiffTreeView(store, cli);
   const trackingView = new TrackingView();
+
+  // When track CLI creates a snapshot, refresh the timeline
+  trackRunner.onSnapshotCreated(() => {
+    void timelineView.refresh();
+  });
 
   disposables.push(
     vscode.window.registerTreeDataProvider("gitcrumbs.actions", actionsView),
@@ -125,10 +120,9 @@ export async function activate(
     vscode.commands.registerCommand("gitcrumbs.openDiff", (item: unknown) =>
       diffView.openDiff(item as any)
     ),
-    // UPDATED: pass cli into selectRepo
     vscode.commands.registerCommand(
       "gitcrumbs.selectRepo",
-      async () => await selectRepo(timelineView, trackRunner, cli)
+      async () => await selectRepo(timelineView, trackRunner, cli, actionsView)
     ),
     vscode.commands.registerCommand("gitcrumbs.refreshTimeline", () =>
       timelineView.refresh()
@@ -152,7 +146,9 @@ export async function activate(
   );
   status.text = "Gitcrumbs: ○ Stopped";
   status.command = "gitcrumbs.startTracking";
-  status.tooltip = "Start gitcrumbs tracking";
+  status.tooltip = `Start tracking ${repoDisplayName(
+    store.repoPath() ?? ""
+  )}`.trim();
   status.show();
   disposables.push(status);
 
@@ -164,11 +160,31 @@ export async function activate(
       ? "gitcrumbs.stopTracking"
       : "gitcrumbs.startTracking";
     setCtx("gitcrumbs.isTracking", running);
+    status.tooltip = `${running ? "Stop" : "Start"} tracking ${repoDisplayName(
+      store.repoPath() ?? ""
+    )}`.trim();
   });
 
   // Initial refresh
-  timelineView.refresh();
+  await timelineView.refresh();
   diffView.refresh();
+
+  // -------- auto-refresh timeline every 30 seconds --------
+  const intervalId = setInterval(() => {
+    void timelineView.refresh();
+  }, 30_000);
+  // Make sure we clear it on deactivate
+  disposables.push({
+    dispose: () => clearInterval(intervalId),
+  });
+
+  // -------- auto-stop tracker on workspace changes --------
+  const workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    if (trackRunner.isRunning) {
+      trackRunner.stop();
+    }
+  });
+  disposables.push(workspaceSub);
 
   // -------- startup checks --------
   const cwdForChecks =
@@ -200,7 +216,7 @@ export async function activate(
 
       if (version !== store.requiredGitcrumbsVersion) {
         vscode.window.showWarningMessage(
-          `Gitcrumbs: Please update your gitcrumbs CLI to version ${store.requiredGitcrumbsVersion} (found ${version}). If you installed it with pipx, run 'pipx upgrade gitcrumbs'.`,
+          `Gitcrumbs: Please update your gitcrumbs CLI to version ${store.requiredGitcrumbsVersion} (found ${version}). If you installed it with pipx, run 'pipx upgrade gitcrumbs'.`
         );
       }
     }
@@ -215,15 +231,19 @@ export async function activate(
 
   const repoPath = store.repoPath?.() ?? ""; // Store has repoPath()
   if (repoPath) {
-    // On load: if not a Git repo -> show message and do nothing else (per requirement)
-    // If is a Git repo but gitcrumbs not initialised -> auto-init then prompt to start tracking.
-    maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, repoPath);
+    // Fire and forget – don't block activation on this flow.
+    void maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, repoPath);
   }
 
   context.subscriptions.push(...disposables);
 }
 
 export function deactivate() {
+  // Ensure tracker is stopped when the extension is deactivated
+  if (trackRunnerRef?.isRunning) {
+    trackRunnerRef.stop();
+  }
+
   for (const d of disposables.splice(0)) {
     try {
       d.dispose();
