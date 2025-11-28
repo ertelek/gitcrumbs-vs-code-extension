@@ -17,6 +17,9 @@ import {
 
 let disposables: vscode.Disposable[] = [];
 
+// Keep a module-level reference so we can stop the tracker on deactivate, etc.
+let trackRunnerRef: TrackRunner | null = null;
+
 /**
  * On startup, if there is a repo path configured/workspace-root:
  * - If it's not a Git repo → just inform the user (with repo name) and exit.
@@ -65,16 +68,18 @@ export async function activate(
   const store = new Store();
   const cli = new Cli(cliPath);
   const trackRunner = new TrackRunner(cli, store);
-
-  trackRunner.onSnapshotCreated(() => {
-    timelineView.refresh();
-  });
+  trackRunnerRef = trackRunner;
 
   // Tree views
   const actionsView = new ActionsView(store);
   const timelineView = new TimelineTreeView(store, cli);
   const diffView = new DiffTreeView(store, cli);
   const trackingView = new TrackingView();
+
+  // When track CLI creates a snapshot, refresh the timeline
+  trackRunner.onSnapshotCreated(() => {
+    void timelineView.refresh();
+  });
 
   disposables.push(
     vscode.window.registerTreeDataProvider("gitcrumbs.actions", actionsView),
@@ -164,6 +169,23 @@ export async function activate(
   await timelineView.refresh();
   diffView.refresh();
 
+  // -------- auto-refresh timeline every 30 seconds --------
+  const intervalId = setInterval(() => {
+    void timelineView.refresh();
+  }, 30_000);
+  // Make sure we clear it on deactivate
+  disposables.push({
+    dispose: () => clearInterval(intervalId),
+  });
+
+  // -------- auto-stop tracker on workspace changes --------
+  const workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
+    if (trackRunner.isRunning) {
+      trackRunner.stop();
+    }
+  });
+  disposables.push(workspaceSub);
+
   // -------- startup checks --------
   const cwdForChecks =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
@@ -217,6 +239,11 @@ export async function activate(
 }
 
 export function deactivate() {
+  // Ensure tracker is stopped when the extension is deactivated
+  if (trackRunnerRef?.isRunning) {
+    trackRunnerRef.stop();
+  }
+
   for (const d of disposables.splice(0)) {
     try {
       d.dispose();
