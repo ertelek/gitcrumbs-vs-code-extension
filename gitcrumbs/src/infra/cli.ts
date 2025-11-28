@@ -108,4 +108,25 @@ export class Cli {
     if (choice === "Show Details")
       await vscode.window.showInformationMessage(detail, { modal: true });
   }
+
+  async getVersion(cwd: string): Promise<string | null> {
+    const bin = this.resolveBin(cwd);
+    const res = await Cli.runRaw(bin, ["-V"], cwd);
+
+    // Older gitcrumbs versions will exit non-zero and print:
+    // "No such option: -V"
+    if (res.code !== 0) {
+      const ch = vscode.window.createOutputChannel("Gitcrumbs");
+      ch.appendLine("[gitcrumbs] -V not supported by current gitcrumbs binary");
+      ch.appendLine(`[gitcrumbs] stdout: ${res.stdout}`);
+      ch.appendLine(`[gitcrumbs] stderr: ${res.stderr}`);
+      return null;
+    }
+
+    // Expected format for new versions:
+    // gitcrumbs, version 0.1.5
+    const m = res.stdout.match(/gitcrumbs,\s+version\s+([^\s]+)/i);
+    if (!m) return null;
+    return m[1].trim();
+  }
 }
