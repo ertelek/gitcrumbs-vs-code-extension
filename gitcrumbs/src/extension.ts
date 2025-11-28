@@ -92,7 +92,7 @@ async function runStartUpChecks(
 
     if (choice === "Go to Gitcrumbs") {
       vscode.env.openExternal(
-        vscode.Uri.parse("https://pypi.org/project/gitcrumbs/")
+        vscode.Uri.parse("https://github.com/ertelek/gitcrumbs#install")
       );
     }
 
