@@ -59,6 +59,82 @@ async function maybeAutoInitGitcrumbsOnLoad(
   await askToStartTrackingForRepo(trackRunner, repoPath);
 }
 
+async function runStartUpChecks(
+  trackRunner: TrackRunner,
+  cli: Cli,
+  store: Store,
+  context: vscode.ExtensionContext
+) {
+  // -------- startup checks --------
+  const cwdForChecks =
+    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
+
+  // -------- git availability --------
+  if (!Cli.commandExists("git", cwdForChecks)) {
+    const choice = await vscode.window.showErrorMessage(
+      "Gitcrumbs: Git is not installed or not found on PATH.",
+      "Go to Git"
+    );
+
+    if (choice === "Go to Git") {
+      vscode.env.openExternal(vscode.Uri.parse("https://git-scm.com/install/"));
+    }
+
+    context.subscriptions.push(...disposables);
+  }
+
+  // -------- gitcrumbs CLI availability --------
+  if (!Cli.commandExists(cli.bin, cwdForChecks)) {
+    const choice = await vscode.window.showErrorMessage(
+      "Gitcrumbs: The gitcrumbs CLI is not installed or not found on PATH.",
+      "Go to Gitcrumbs"
+    );
+
+    if (choice === "Go to Gitcrumbs") {
+      vscode.env.openExternal(
+        vscode.Uri.parse("https://pypi.org/project/gitcrumbs/")
+      );
+    }
+
+    context.subscriptions.push(...disposables);
+  }
+
+  if (
+    !Cli.commandExists("git", cwdForChecks) ||
+    !Cli.commandExists(cli.bin, cwdForChecks)
+  )
+    return;
+
+  // -------- gitcrumbs version check on first load --------
+  try {
+    const version = await cli.getVersion(cwdForChecks);
+    if (version !== null) {
+      (store as any).gitcrumbsVersion = version;
+      (store as any).gitcrumbsVersionMatches =
+        version === store.requiredGitcrumbsVersion;
+
+      if (version !== store.requiredGitcrumbsVersion) {
+        vscode.window.showWarningMessage(
+          `Gitcrumbs: Please update your gitcrumbs CLI to version ${store.requiredGitcrumbsVersion} (found ${version}). If you installed it with pipx, run 'pipx upgrade gitcrumbs'.`
+        );
+      }
+    }
+    // If version is null, we assume an older CLI without -V support and stay quiet.
+  } catch (err) {
+    // Non-fatal: just log to output channel
+    const ch = vscode.window.createOutputChannel("Gitcrumbs");
+    ch.appendLine(
+      `[gitcrumbs] Failed to determine gitcrumbs CLI version: ${String(err)}`
+    );
+  }
+
+  const repoPath = store.repoPath?.() ?? ""; // Store has repoPath()
+  if (repoPath) {
+    // Fire and forget – don't block activation on this flow.
+    void maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, repoPath);
+  }
+}
+
 export async function activate(
   context: vscode.ExtensionContext
 ): Promise<void> {
@@ -69,6 +145,8 @@ export async function activate(
   const cli = new Cli(cliPath);
   const trackRunner = new TrackRunner(cli, store);
   trackRunnerRef = trackRunner;
+
+  await runStartUpChecks(trackRunner, cli, store, context);
 
   // Tree views
   const actionsView = new ActionsView(store);
@@ -185,55 +263,6 @@ export async function activate(
     }
   });
   disposables.push(workspaceSub);
-
-  // -------- startup checks --------
-  const cwdForChecks =
-    vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd();
-
-  if (!Cli.commandExists("git", cwdForChecks)) {
-    vscode.window.showErrorMessage(
-      "Gitcrumbs: Git is not installed or not found on PATH. Please install Git and reload."
-    );
-    context.subscriptions.push(...disposables);
-    return;
-  }
-
-  if (!Cli.commandExists(cli.bin, cwdForChecks)) {
-    vscode.window.showErrorMessage(
-      "Gitcrumbs: The gitcrumbs CLI is not installed or not found on PATH. Please install gitcrumbs and reload."
-    );
-    context.subscriptions.push(...disposables);
-    return;
-  }
-
-  // -------- gitcrumbs version check on first load --------
-  try {
-    const version = await cli.getVersion(cwdForChecks);
-    if (version !== null) {
-      (store as any).gitcrumbsVersion = version;
-      (store as any).gitcrumbsVersionMatches =
-        version === store.requiredGitcrumbsVersion;
-
-      if (version !== store.requiredGitcrumbsVersion) {
-        vscode.window.showWarningMessage(
-          `Gitcrumbs: Please update your gitcrumbs CLI to version ${store.requiredGitcrumbsVersion} (found ${version}). If you installed it with pipx, run 'pipx upgrade gitcrumbs'.`
-        );
-      }
-    }
-    // If version is null, we assume an older CLI without -V support and stay quiet.
-  } catch (err) {
-    // Non-fatal: just log to output channel
-    const ch = vscode.window.createOutputChannel("Gitcrumbs");
-    ch.appendLine(
-      `[gitcrumbs] Failed to determine gitcrumbs CLI version: ${String(err)}`
-    );
-  }
-
-  const repoPath = store.repoPath?.() ?? ""; // Store has repoPath()
-  if (repoPath) {
-    // Fire and forget – don't block activation on this flow.
-    void maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, repoPath);
-  }
 
   context.subscriptions.push(...disposables);
 }
