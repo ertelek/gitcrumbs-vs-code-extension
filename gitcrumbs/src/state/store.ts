@@ -3,7 +3,7 @@ import * as vscode from "vscode";
 export class Store {
   private revision = 0;
 
-  readonly requiredGitcrumbsVersion = "0.1.5";
+  readonly requiredGitcrumbsVersion = "0.1.7";
 
   gitcrumbsVersion: string | null = null;
 
