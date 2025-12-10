@@ -206,6 +206,10 @@ export async function activate(
       timelineView.refresh()
     ),
     vscode.commands.registerCommand(
+      "gitcrumbs.renameSnapshot",
+      (item: unknown) => timelineView.rename(item as any)
+    ),
+    vscode.commands.registerCommand(
       "gitcrumbs.openFileSideBySide",
       async (relPathOrItem: unknown, a?: number, b?: number) => {
         await openFileSideBySide(relPathOrItem, a, b, {

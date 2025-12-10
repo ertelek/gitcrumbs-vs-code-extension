@@ -13,6 +13,8 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
 
   private a?: number;
   private b?: number;
+  private aLabel?: string;
+  private bLabel?: string;
   private changes: Change[] = [];
   private loading = false;
   private loadKey: string | null = null;
@@ -26,19 +28,29 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
   private coerceId(item: unknown): number | undefined {
     if (item == null) return undefined;
     const anyItem = item as any;
+    // Doing these checks in order to support our TimelineItem and
+    // Snapshot (from the db) shapes
     if (typeof anyItem.snapshotId === "number") return anyItem.snapshotId;
     if (typeof anyItem.id === "number") return anyItem.id;
     if (typeof item === "number") return item as number;
     return undefined;
   }
 
+  private setItemLabel(item: unknown, id?: number): string {
+    const anyItem = item as any;
+    if (typeof anyItem?.label === "string") return anyItem.label;
+    return id ? String(id) : "";
+  }
+
   setA(item?: unknown) {
     this.a = this.coerceId(item);
+    this.aLabel = this.setItemLabel(item, this.a);
     void this.reload();
   }
 
   setB(item?: unknown) {
     this.b = this.coerceId(item);
+    this.bLabel = this.setItemLabel(item, this.b);
     void this.reload();
   }
 
@@ -224,8 +236,8 @@ export class DiffTreeView implements vscode.TreeDataProvider<vscode.TreeItem> {
   }
 
   private label() {
-    const a = this.a ?? "–";
-    const b = this.b ?? "–";
+    const a = this.aLabel ?? "–";
+    const b = this.bLabel ?? "–";
     return this.a || this.b ? `Snapshots: A=${a}   B=${b}` : "";
   }
 
