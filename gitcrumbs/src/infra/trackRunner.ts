@@ -1,4 +1,3 @@
-// infra/trackRunner.ts
 import * as vscode from "vscode";
 import { Cli } from "./cli";
 import { Store } from "../state/store";
@@ -9,7 +8,7 @@ export class TrackRunner {
   private emitter = new vscode.EventEmitter<boolean>();
   readonly onStateChanged = this.emitter.event;
 
-  // NEW: event for snapshot creation
+  // Event for snapshot creation (used to refresh timeline)
   private snapshotEmitter = new vscode.EventEmitter<void>();
   readonly onSnapshotCreated = this.snapshotEmitter.event;
 
@@ -25,14 +24,10 @@ export class TrackRunner {
       return;
     }
 
-    const { scanInterval, snapshotAfter } = this.store.config();
-    const args = [
-      "track",
-      "--scan-interval",
-      String(scanInterval),
-      "--snapshot-after",
-      String(snapshotAfter),
-    ];
+    // Tracking mechanism: the CLI watches the filesystem for changes.
+    const { snapshotAfter } = this.store.config();
+    const args = ["track", "--snapshot-after", String(snapshotAfter)];
+
     this.proc = this.cli.runBackground(args, repo);
     this.isRunning = true;
     this.emitter.fire(true);
@@ -42,14 +37,16 @@ export class TrackRunner {
       const s = d.toString().trim();
       if (s) console.log(`[gitcrumbs track] ${s}`);
       if (s.includes("Snapshot created:")) {
+        // Keep store revision in sync and notify listeners so the timeline refreshes
         this.store.bumpRevision();
-        // NEW: notify listeners (Timeline will refresh)
         this.snapshotEmitter.fire();
       }
     });
+
     this.proc.stderr?.on("data", (d) =>
       console.warn(`[gitcrumbs track][stderr] ${d.toString().trim()}`)
     );
+
     this.proc.on("close", () => {
       this.proc = null;
       this.isRunning = false;
