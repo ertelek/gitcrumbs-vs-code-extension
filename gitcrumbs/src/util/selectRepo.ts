@@ -4,6 +4,7 @@ import { TimelineTreeView } from "../ui/timelineTree";
 import { TrackRunner } from "../infra/trackRunner";
 import { Cli } from "../infra/cli";
 import { ActionsView } from "../ui/actionsView";
+import { Store } from "../state/store";
 
 /**
  * Get a human-friendly name for a repo path (just the folder name).
@@ -41,19 +42,42 @@ export async function isGitcrumbsInitialised(
 /**
  * Common helper to ask whether to start tracking for a repo,
  * and start the TrackRunner if the user confirms.
+ *
+ * Behaviour with preferences:
+ *  - If repo is marked "auto"  → start tracking without asking.
+ *  - If repo is marked "never" → do nothing and do not ask.
+ *  - If no preference          → show prompt and remember answer.
  */
 export async function askToStartTrackingForRepo(
   trackRunner: TrackRunner,
+  store: Store,
   repoPath: string
 ): Promise<void> {
   const repoName = repoDisplayName(repoPath);
+  const repoId = store.repoIdForPath(repoPath);
+
+  const existing = store.getTrackingPreference(repoId);
+  if (existing === "auto") {
+    // Already opted-in for this repo → auto-start
+    trackRunner.start();
+    return;
+  }
+  if (existing === "never") {
+    // Already opted-out for this repo → never auto-start or prompt
+    return;
+  }
+
+  // No preference yet → ask once
   const choice = await vscode.window.showInformationMessage(
     `Gitcrumbs initialised for repository ${repoName}. Start tracking now?`,
     "Yes",
     "No"
   );
   if (choice === "Yes") {
+    await store.setTrackingPreference(repoId, "auto");
     trackRunner.start();
+  } else if (choice === "No") {
+    await store.setTrackingPreference(repoId, "never");
   }
 }
 
@@ -61,7 +85,8 @@ export async function selectRepo(
   timelineView: TimelineTreeView,
   trackRunner: TrackRunner,
   cli: Cli,
-  actionsView: ActionsView
+  actionsView: ActionsView,
+  store: Store
 ) {
   const cfg = vscode.workspace.getConfiguration("gitcrumbs");
   const saved = cfg.get<string>("repoPath");
@@ -133,8 +158,8 @@ export async function selectRepo(
         return;
       }
 
-      // Git + gitcrumbs initialised successfully → ask to start tracking
-      await askToStartTrackingForRepo(trackRunner, repoPath);
+      // Git + gitcrumbs initialised successfully → ask/start according to preference
+      await askToStartTrackingForRepo(trackRunner, store, repoPath);
     }
 
     await timelineView.refresh();
@@ -143,7 +168,7 @@ export async function selectRepo(
   }
 
   // Branch 2: Is a Git repo → if gitcrumbs not initialised, auto-init,
-  // then ask to start tracking (shared helper).
+  // then ask/start tracking (shared helper).
   const initialised = await isGitcrumbsInitialised(cli, repoPath);
   if (!initialised) {
     const initGc = await cli.run(["init"], repoPath);
@@ -159,8 +184,8 @@ export async function selectRepo(
   }
 
   // In both cases (already initialised or newly initialised),
-  // ask whether to start tracking for this repo.
-  await askToStartTrackingForRepo(trackRunner, repoPath);
+  // ask/auto-start depending on existing preference.
+  await askToStartTrackingForRepo(trackRunner, store, repoPath);
 
   await timelineView.refresh();
   actionsView.refresh();

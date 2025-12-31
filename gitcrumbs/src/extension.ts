@@ -24,11 +24,15 @@ let trackRunnerRef: TrackRunner | null = null;
  * On startup, if there is a repo path configured/workspace-root:
  * - If it's not a Git repo → just inform the user (with repo name) and exit.
  * - If it is a Git repo but gitcrumbs is not initialised → init gitcrumbs.
- * - In either case, ask whether to start tracking (shared helper).
+ * - In either case, respect per-repo tracking preferences:
+ *   - auto: start tracking automatically
+ *   - never: do nothing
+ *   - none: ask once whether to start tracking
  */
 async function maybeAutoInitGitcrumbsOnLoad(
   cli: Cli,
   trackRunner: TrackRunner,
+  store: Store,
   repoPath: string
 ) {
   const repoName = repoDisplayName(repoPath);
@@ -55,8 +59,8 @@ async function maybeAutoInitGitcrumbsOnLoad(
     }
   }
 
-  // Then ask whether to start tracking for this repo (shared logic)
-  await askToStartTrackingForRepo(trackRunner, repoPath);
+  // Then respect per-repo preference (auto/never) or ask once.
+  await askToStartTrackingForRepo(trackRunner, store, repoPath);
 }
 
 async function runStartUpChecks(
@@ -131,7 +135,7 @@ async function runStartUpChecks(
   const repoPath = store.repoPath?.() ?? ""; // Store has repoPath()
   if (repoPath) {
     // Fire and forget – don't block activation on this flow.
-    void maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, repoPath);
+    void maybeAutoInitGitcrumbsOnLoad(cli, trackRunner, store, repoPath);
   }
 }
 
@@ -141,8 +145,9 @@ export async function activate(
   const cfg = vscode.workspace.getConfiguration("gitcrumbs");
   const cliPath = cfg.get<string>("path", "gitcrumbs");
 
-  const store = new Store();
+  const store = new Store(context);
   const cli = new Cli(cliPath);
+
   const trackRunner = new TrackRunner(cli, store);
   trackRunnerRef = trackRunner;
 
@@ -168,12 +173,26 @@ export async function activate(
 
   // Commands
   disposables.push(
-    vscode.commands.registerCommand("gitcrumbs.startTracking", () =>
-      trackRunner.start()
-    ),
-    vscode.commands.registerCommand("gitcrumbs.stopTracking", () =>
-      trackRunner.stop()
-    ),
+    vscode.commands.registerCommand("gitcrumbs.startTracking", async () => {
+      const repoPath = store.repoPath();
+      if (repoPath) {
+        await store.setTrackingPreference(
+          store.repoIdForPath(repoPath),
+          "auto"
+        );
+      }
+      trackRunner.start();
+    }),
+    vscode.commands.registerCommand("gitcrumbs.stopTracking", async () => {
+      const repoPath = store.repoPath();
+      if (repoPath) {
+        await store.setTrackingPreference(
+          store.repoIdForPath(repoPath),
+          "never"
+        );
+      }
+      trackRunner.stop();
+    }),
     vscode.commands.registerCommand("gitcrumbs.snapshotNow", () =>
       timelineView.snapshotNow()
     ),
@@ -200,7 +219,8 @@ export async function activate(
     ),
     vscode.commands.registerCommand(
       "gitcrumbs.selectRepo",
-      async () => await selectRepo(timelineView, trackRunner, cli, actionsView)
+      async () =>
+        await selectRepo(timelineView, trackRunner, cli, actionsView, store)
     ),
     vscode.commands.registerCommand("gitcrumbs.refreshTimeline", () =>
       timelineView.refresh()
@@ -263,6 +283,8 @@ export async function activate(
   // -------- auto-stop tracker on workspace changes --------
   const workspaceSub = vscode.workspace.onDidChangeWorkspaceFolders(() => {
     if (trackRunner.isRunning) {
+      // This is an automatic stop due to workspace change,
+      // do NOT change the user's tracking preference.
       trackRunner.stop();
     }
   });
@@ -274,6 +296,7 @@ export async function activate(
 export function deactivate() {
   // Ensure tracker is stopped when the extension is deactivated
   if (trackRunnerRef?.isRunning) {
+    // Deactivation is also automatic – don't touch preferences.
     trackRunnerRef.stop();
   }
 
