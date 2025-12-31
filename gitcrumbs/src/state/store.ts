@@ -5,7 +5,7 @@ type TrackingPreference = "auto" | "never";
 export class Store {
   private revision = 0;
 
-  readonly requiredGitcrumbsVersion = "0.1.7";
+  readonly requiredGitcrumbsVersion = "0.1.8";
 
   gitcrumbsVersion: string | null = null;
 
