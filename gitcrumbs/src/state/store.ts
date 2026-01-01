@@ -11,7 +11,7 @@ export class Store {
 
   gitcrumbsVersionMatches: boolean | null = null;
 
-  // NEW: we keep a handle to the extension context
+  // We keep a handle to the extension context
   constructor(private readonly context: vscode.ExtensionContext) {}
 
   bumpRevision() {
@@ -45,10 +45,16 @@ export class Store {
     return this.repoIdForPath(this.repoPath() ?? "no-repo");
   }
 
-  config(): { scanInterval: number; snapshotAfter: number } {
+  /**
+   * Extension configuration relevant to tracking.
+   *
+   * The CLI now uses filesystem watching instead of polling, so the only
+   * knob we expose is `snapshotAfter`: how long the repo must stay quiet
+   * before a new snapshot is created.
+   */
+  config(): { snapshotAfter: number } {
     const cfg = vscode.workspace.getConfiguration("gitcrumbs");
     return {
-      scanInterval: cfg.get<number>("scanInterval", 30),
       snapshotAfter: cfg.get<number>("snapshotAfter", 90),
     };
   }

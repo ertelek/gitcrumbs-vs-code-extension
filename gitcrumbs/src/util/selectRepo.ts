@@ -62,7 +62,6 @@ export async function askToStartTrackingForRepo(
     trackRunner.start();
     return;
   }
-
   const choice = await vscode.window.showInformationMessage(
     `Gitcrumbs initialised for repository ${repoName}. Start tracking now?`,
     "Yes",
