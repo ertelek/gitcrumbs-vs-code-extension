@@ -62,12 +62,6 @@ export async function askToStartTrackingForRepo(
     trackRunner.start();
     return;
   }
-  if (existing === "never") {
-    // Already opted-out for this repo → never auto-start or prompt
-    return;
-  }
-
-  // No preference yet → ask once
   const choice = await vscode.window.showInformationMessage(
     `Gitcrumbs initialised for repository ${repoName}. Start tracking now?`,
     "Yes",
